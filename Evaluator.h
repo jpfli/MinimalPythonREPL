@@ -167,133 +167,148 @@ class Evaluator {
                 // Try to resolve as a single-character user variable first
                 if(1 == expr->identifier.size()) {
                     auto var_iter = vars.find(expr->identifier[0]);
-                    if(vars.cend() != var_iter) return var_iter->value;
+                    if(vars.cend() != var_iter) {
+                        return var_iter->value;
+                    }
                 }
                 
                 // Then try to resolve as a builtin identifier
                 auto builtin_iter = builtins.find(expr->identifier);
                 if(builtins.cend() != builtin_iter) {
-                    if(Builtin::Kind::INTEGER == builtin_iter->value.kind) return builtin_iter->value.value;
-                    else if(Builtin::Kind::FUNCTION == builtin_iter->value.kind) error = "expected '(' after callable";
-                    else if(Builtin::Kind::SUBSCRIPT == builtin_iter->value.kind) error = "expected '[' after subscriptable";
-                    else error = "undefined variable";
+                    switch(builtin_iter->value.kind) {
+                        case Builtin::Kind::INTEGER:
+                            return builtin_iter->value.value;
+                        case Builtin::Kind::FUNCTION:
+                            error = "expected '(' after callable";
+                            break;
+                        case Builtin::Kind::SUBSCRIPT:
+                            error = "expected '[' after subscriptable";
+                            break;
+                        default:
+                            error = "undefined variable";
+                    }
                 }
                 else {
                     // Not found in either map
                     error = "undefined variable";
                 }
                 
-                return 0;
+                break;
             }
             case Expression::Type::ASSIGN: {
                 // Assignment: evaluate RHS first, then assign to LHS
                 const auto rval = evaluate(expr->right, error, vars, builtins);
-                if(error) return 0;
+                if(error) break;
                 
                 auto lhs = expr->left;
                 if(Expression::Type::IDENTIFIER == lhs->type) {
                     // Simple variable assignment: x = 4
-                    if(1 < lhs->identifier.size()) {
-                        error = "user variable names must be single-character";
-                        return 0;
+                    if(1 == lhs->identifier.size()) {
+                        vars[lhs->identifier[0]] = rval;
+                        return rval;
                     }
-                    vars[lhs->identifier[0]] = rval;
+                    error = "user variable names must be single-character";
                 }
                 else if(Evaluator::Expression::Type::BINARY_OP == lhs->type && '[' == lhs->op) {
                     // Memory store via subscript: mem[index] = 4
                     const auto builtin_iter = builtins.find(lhs->left->identifier);
-                    if(builtins.cend() == builtin_iter) {
-                        error = "undefined identifier";
-                        return 0;
-                    }
-                    else if(Builtin::Kind::SUBSCRIPT != builtin_iter->value.kind) {
+                    if(builtins.cend() != builtin_iter) {
+                        if(Builtin::Kind::SUBSCRIPT == builtin_iter->value.kind) {
+                            // Evaluate the index expression
+                            const auto id = evaluate(lhs->right, error, vars, builtins);
+                            if(error) break;
+                            
+                            // Get pointer to memory location
+                            void* ptr = builtin_iter->value.subscript.fn(id);
+                            
+                            // Store value with appropriate bit-width based on builtin configuration
+                            switch(builtin_iter->value.subscript.width) {
+                                case 1: *static_cast<uint8_t*>(ptr) = rval; break;
+                                case 2: *static_cast<uint16_t*>(ptr) = rval; break;
+                                default: *static_cast<uint32_t*>(ptr) = rval;
+                            }
+                            
+                            return rval;
+                        }
                         error = "not subscriptable";
-                        return 0;
                     }
-                    
-                    // Evaluate the index expression
-                    const auto index = evaluate(lhs->right, error, vars, builtins);
-                    if(error) return 0;
-                    
-                    // Get pointer to memory location
-                    void* ptr = builtin_iter->value.subscript.fn(index);
-                    
-                    // Store value with appropriate bit-width based on builtin configuration
-                    switch(builtin_iter->value.subscript.width) {
-                        case 1: *static_cast<uint8_t*>(ptr) = rval; break;
-                        case 2: *static_cast<uint16_t*>(ptr) = rval; break;
-                        default: *static_cast<int32_t*>(ptr) = rval;
+                    else {
+                        error = "undefined identifier";
                     }
                 }
                 else {
                     // Invalid assignment target
                     error = "invalid assign";
-                    return 0;
                 }
-                return rval;
+                
+                break;
             }
             case Expression::Type::UNARY_OP: {
                 // Evaluate operand first, then apply operator
                 const auto val = evaluate(expr->operand, error, vars, builtins);
-                if(error) return 0;
+                if(error) break;
                 
                 switch(expr->op) {
                     case '~': return ~val;      // Bitwise NOT
                     case '-': return -val;      // Negation
                     case '+': return val;       // Unary plus (identity)
-                    default: return 0;          // Unknown operator
+                    default: break;             // Unknown operator
                 }
+                
+                break;
             }
             case Expression::Type::BINARY_OP: {
                 // Handling for subscript operator [index]
                 if('[' == expr->op) {
                     auto builtin_iter = builtins.find(expr->left->identifier);
-                    if(builtins.cend() == builtin_iter) {
+                    if(builtins.cend() != builtin_iter) {
+                        if(Builtin::Kind::SUBSCRIPT == builtin_iter->value.kind) {
+                            // Evaluate the index
+                            const auto id = evaluate(expr->right, error, vars, builtins);
+                            if(error) break;
+                            
+                            // Load value from memory with appropriate bit-width
+                            void* ptr = builtin_iter->value.subscript.fn(id);
+                            switch(builtin_iter->value.subscript.width) {
+                                case 1: return *static_cast<uint8_t*>(ptr);
+                                case 2: return *static_cast<uint16_t*>(ptr);
+                                default: return *static_cast<int32_t*>(ptr);
+                            }
+                        }
+                        else {
+                            error = "not subscriptable";
+                        }
+                    }
+                    else {
                         error = "undefined identifier";
-                        return 0;
-                    }
-                    if(Builtin::Kind::SUBSCRIPT != builtin_iter->value.kind) {
-                        error = "not subscriptable";
-                        return 0;
-                    }
-                    
-                    // Evaluate the index
-                    const auto index = evaluate(expr->right, error, vars, builtins);
-                    if(error) return 0;
-                    
-                    // Load value from memory with appropriate bit-width
-                    void* ptr = builtin_iter->value.subscript.fn(index);
-                    switch(builtin_iter->value.subscript.width) {
-                        case 1: return *static_cast<uint8_t*>(ptr);
-                        case 2: return *static_cast<uint16_t*>(ptr);
-                        default: return *static_cast<int32_t*>(ptr);
                     }
                 }
                 else if('(' == expr->op) {
-                    // Special handling for function call operator (arg)
+                    // Handling for function call operator (arg)
                     auto builtin_iter = builtins.find(expr->left->identifier);
                     if(builtins.cend() != builtin_iter) {
+                        if(Builtin::Kind::FUNCTION == builtin_iter->value.kind) {
+                            // Evaluate argument and call the builtin function
+                            const auto arg = evaluate(expr->right, error, vars, builtins);
+                            if(error) break;
+                            
+                            return builtin_iter->value.fn(arg);
+                        }
+                        else {
+                            error = "not callable";
+                        }
+                    }
+                    else {
                         error = "undefined identifier";
-                        return 0;
                     }
-                    if(Builtin::Kind::FUNCTION != builtin_iter->value.kind) {
-                        error = "not callable";
-                        return 0;
-                    }
-                    
-                    // Evaluate argument and call the builtin function
-                    const auto arg = evaluate(expr->right, error, vars, builtins);
-                    if(error) return 0;
-                    
-                    return builtin_iter->value.fn(arg);
                 }
                 else {  // Standard binary operators
                     // Evaluate both operands
                     const auto lval = evaluate(expr->left, error, vars, builtins);
-                    if(error) return 0;
+                    if(error) break;
                     
                     const auto rval = evaluate(expr->right, error, vars, builtins);
-                    if(error) return 0;
+                    if(error) break;
                     
                     // Apply the appropriate operator
                     switch(expr->op) {
@@ -304,17 +319,17 @@ class Evaluator {
                         case '-': return lval - rval;       // Subtraction
                         case '*': return lval * rval;       // Multiplication
                         case '/': return lval / rval;       // Division
-                        default:
-                            error = "invalid operator";
-                            return 0;
+                        default: error = "invalid operator";
                     }
                 }
+                
+                break;
             }
             default:
                 // Unknown expression type
                 error = "evaluation error";
-                return 0;
         }
+        return 0;
     }
     
     
