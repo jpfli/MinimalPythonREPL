@@ -6,62 +6,57 @@
 using Core = Pokitto::Core;
 using Display = Pokitto::Display;
 
+bool serial_changed = false;
+
+void on_serial_changed(int baud, int bits, int parity, int stop) {
+    serial_changed = true;
+}
+
 int main() {
-    static constexpr char title[] = "Minimal Python-like REPL for Pokitto";
-    
     Core::begin();
     
     // Print info for user before calling USBSerial constructor, which blocks until connection is established
     Core::update();
     Display::setCursor(0, 0);
-    Display::write(title);
     Display::write("\n\nConnecting USB...");
     Core::update();
-
-    USBSerial serial;
     
-    static constexpr uint8_t dots[] = ".....";
-    uint8_t dot_count = 5;
+    USBSerial serial;
+    serial.attach(on_serial_changed);
+    
+    Shell* shell = nullptr;
+    
+    static constexpr uint8_t dots[] = "...";
+    uint8_t dot_count = 3;
     
     uint32_t next = Core::getTime();
     while(Core::isRunning()) {
         if(!Core::update()) continue;
         
-        const uint32_t now = Core::getTime();
-        if(now >= next) {
-            next += 200;
-            dot_count = dot_count < 5 ? ++dot_count : 1;
+        if(serial_changed) {
+            if(!shell) {
+                // Drain any pending garbage data
+                while(serial.available() > 0) serial._getc();
+                
+                shell = new Shell(&serial);
+                serial.attach(shell, &Shell::process);
+            }
             
-            // Send probe to see if host is consuming data
-            uint8_t probe[] = {'\r'};
-            if(serial.writeBlock(probe, 1)) break;
+            shell->reset();
+            serial_changed = false;
         }
-        
-        Display::setCursor(0, 0);
-        Display::write(title);
-        Display::write("\n\nConnecting USB");
-        Display::write(dots, dot_count);
-    }
-    
-    auto shell = new Shell(&serial);
-    
-    dot_count = 5;
-    
-    next = Core::getTime();
-    while(Core::isRunning()) {
-        if(!Core::update()) continue;
         
         const uint32_t now = Core::getTime();
         if(now >= next) {
-            next += 200;
-            dot_count = dot_count < 5 ? ++dot_count : 1;
+            next += 500;
+            dot_count = dot_count < 3 ? ++dot_count : 0;
         }
         
         Display::setCursor(0, 0);
-        Display::write(title);
-        Display::write("\n\nRunning");
+        Display::write("Minimal Python-like REPL for Pokitto\n\n");
+        Display::write(shell ? "Running" : "Waiting");
         Display::write(dots, dot_count);
     }
-
+    
     return 0;
 }
