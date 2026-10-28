@@ -5,27 +5,27 @@ struct Builtin {
     
     Kind kind;
     union {
-        int value;                        // INTEGER
-        int (*fn)(int arg);               // FUNCTION call operator
-        struct {                          // SUBSCRIPT operator
-            void* (*fn)(unsigned int i);
-            unsigned int width;
+        int32_t value;                  // INTEGER
+        int32_t (*fn)(int32_t arg);     // FUNCTION call operator
+        struct {                        // SUBSCRIPT operator
+            void* (*fn)(uint32_t i);
+            uint8_t width;
         } subscript;
     };
     
-    static constexpr Builtin integer(int v) {
+    static constexpr Builtin integer(int32_t v) {
         Builtin b{Kind::INTEGER};
         b.value = v;
         return b;
     }
     
-    static constexpr Builtin function_op(int (*f)(int arg)) {
+    static constexpr Builtin function_op(int32_t (*f)(int32_t arg)) {
         Builtin b{Kind::FUNCTION};
         b.fn = f;
         return b;
     }
     
-    static constexpr Builtin subscript_op(void* (*f)(unsigned int i), unsigned int width) {
+    static constexpr Builtin subscript_op(void* (*f)(uint32_t id), uint8_t width) {
         Builtin b{Kind::SUBSCRIPT};
         b.subscript.fn = f;
         b.subscript.width = width;  // 1, 2 or 4 bytes
