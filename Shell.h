@@ -28,22 +28,41 @@ class Shell {
      * Construct a new Shell instance with the provided serial interface
      */
     explicit Shell(USBSerial* serial) : _serial(serial), _line{}, _cursor_pos(0), _history(), _history_index(0), _vars(), _builtins(), _eval() {
-        
-        // Register built-in memory access functions:
-        // - mem32: Returns pointer for 32-bit access, align address to 4-bytes
-        _builtins[StringView("mem32")] = Builtin::subscript_op(
-            [](unsigned int i) { return reinterpret_cast<void*>(i&~3); }, 4 );
-        // - mem16: Returns pointer for 16-bit access, align address to 2-bytes
-        _builtins[StringView("mem16")] = Builtin::subscript_op(
-            [](unsigned int i) { return reinterpret_cast<void*>(i&~1); }, 2 );
-        // - mem8: Returns pointer for 8-bit access
-        _builtins[StringView("mem8")] = Builtin::subscript_op(
-            [](unsigned int i) { return reinterpret_cast<void*>(i); }, 1 );
-        
-        // Command line buffer initialized with null terminator
+        // Initialized command line buffer with null terminator
         _line.push_back('\0');
         
-        _serial->attach(this, &Shell::process);
+        // ========================================================================
+        // Register built-in memory access functions:
+        // ========================================================================
+        
+        // - mem32: Returns pointer for 32-bit access, align address to 4-bytes
+        _builtins[StringView("mem32")] = Builtin::subscript_op(
+            [](uint32_t id) { return reinterpret_cast<void*>(id & ~3); }, 4);
+        // - mem16: Returns pointer for 16-bit access, align address to 2-bytes
+        _builtins[StringView("mem16")] = Builtin::subscript_op(
+            [](uint32_t id) { return reinterpret_cast<void*>(id & ~1); }, 2);
+        // - mem8: Returns pointer for 8-bit access
+        _builtins[StringView("mem8")] = Builtin::subscript_op(
+            [](uint32_t id) { return reinterpret_cast<void*>(id); }, 1);
+        
+        // ========================================================================
+        // Register built-in functions:
+        // ========================================================================
+        
+        // Return user data base address
+        _builtins[StringView("user_data")] = Builtin::function_op(
+            [](int32_t arg) { return reinterpret_cast<int32_t>(&_user_data); });
+    }
+    
+    void reset() {
+        _line.clear();          // Clear line buffer
+        _line.push_back('\0');  // Maintain null termination
+        _cursor_pos = 0;        // Reset cursor to beginning
+        
+        _history.clear();       // Clear command history
+        _history_index = 0;     // Reset history navigation index
+        
+        _vars.clear();          // Clear user variables
         
         // Calculate and display the user data memory region
         const auto p = reinterpret_cast<uintptr_t>(_user_data);
@@ -279,7 +298,7 @@ class Shell {
     inline void _move_cursor_right() {
         const auto len = _line.size() > 0 ? _line.size() - 1 : 0;
         if(len > _cursor_pos) {
-            _serial->putc(_line[_cursor_pos]);  // Echo character at cursor position
+            _serial->_putc(_line[_cursor_pos]);  // Echo character at cursor position
             ++_cursor_pos;                      // Advance logical cursor position
         }
     }
